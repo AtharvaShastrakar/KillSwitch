@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KillSwitch — Admin</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <section id="login-view" class="login hidden">
+    <form id="login-form" class="card login-card">
+      <h1>KillSwitch</h1>
+      <p class="muted">Offboarding auto-lock &amp; remote wipe</p>
+      <label>Username <input name="username" autocomplete="username" required></label>
+      <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+      <button class="btn primary" type="submit">Sign in</button>
+      <p id="login-error" class="error"></p>
+    </form>
+  </section>
+
+  <div id="app-view" class="hidden">
+    <header class="topbar">
+      <div class="brand">KillSwitch <span id="mode-badge" class="badge"></span></div>
+      <nav id="tabs">
+        <button data-tab="devices" class="tab active">Devices</button>
+        <button data-tab="employees" class="tab">Employees</button>
+        <button data-tab="audit" class="tab">Audit log</button>
+        <button data-tab="enroll" class="tab">Enroll laptops</button>
+      </nav>
+      <div class="who"><span id="who"></span> <button id="logout" class="btn ghost">Sign out</button></div>
+    </header>
+
+    <main>
+      <div id="flash" class="flash hidden"></div>
+
+      <section data-panel="devices">
+        <div class="stats" id="stats"></div>
+        <div class="card">
+          <h2>Devices</h2>
+          <table>
+            <thead><tr><th>Serial / host</th><th>Assigned to</th><th>State</th><th>Timer</th><th>Agent</th><th>Actions</th></tr></thead>
+            <tbody id="devices-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section data-panel="employees" class="hidden">
+        <div class="card">
+          <h2>Add employee</h2>
+          <form id="emp-form" class="row">
+            <input name="empCode" placeholder="Employee code (e.g. E101)" required>
+            <input name="name" placeholder="Full name" required>
+            <input name="email" type="email" placeholder="Email">
+            <button class="btn primary">Add</button>
+          </form>
+        </div>
+        <div class="card">
+          <h2>Employees</h2>
+          <table>
+            <thead><tr><th>Code</th><th>Name</th><th>Status</th><th>Last working day</th><th>Laptops</th><th>Offboard</th></tr></thead>
+            <tbody id="employees-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section data-panel="audit" class="hidden">
+        <div class="card">
+          <h2>Audit log <span class="muted small">(append-only)</span></h2>
+          <table>
+            <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Device</th><th>Employee</th><th>Details</th></tr></thead>
+            <tbody id="audit-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section data-panel="enroll" class="hidden">
+        <div class="card">
+          <h2>Enroll laptops</h2>
+          <p>Create an enrollment token, then put the generated <code>config.json</code> next to the agent and run the installer on each laptop.</p>
+          <form id="token-form" class="row">
+            <label>Uses <input name="uses" type="number" value="10" min="1" max="500"></label>
+            <label>Valid for (hours) <input name="hours" type="number" value="24" min="1" max="720"></label>
+            <button class="btn primary">Create token</button>
+          </form>
+          <pre id="token-out" class="code hidden"></pre>
+        </div>
+        <div class="card">
+          <h2>HR system webhook</h2>
+          <p>Point your HR system's "employee exit" webhook here. Requests must carry an <code>X-Signature</code> header (HMAC-SHA256 of the body).</p>
+          <button id="hr-info" class="btn">Show webhook URL &amp; secret</button>
+          <pre id="hr-out" class="code hidden"></pre>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="dialog">
+    <form method="dialog" class="dialog-body">
+      <h3 id="dialog-title"></h3>
+      <div id="dialog-content"></div>
+      <div class="row end">
+        <button value="cancel" class="btn ghost">Cancel</button>
+        <button value="ok" id="dialog-ok" class="btn primary">OK</button>
+      </div>
+    </form>
+  </dialog>
+  <script src="app.js"></script>
+</body>
+</html>
