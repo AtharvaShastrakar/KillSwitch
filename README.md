@@ -66,14 +66,18 @@ node scripts/send-hr-webhook.mjs http://localhost:8080 <secret> exit E102 --in-d
 2. Run the server where the laptop can reach it. Set `PUBLIC_URL` to that address and use HTTPS outside a lab.
 3. Copy `agent/dist/killswitch-agent.exe`, `agent/install.ps1` and a `config.json` from the dashboard into one folder on the laptop.
 4. In an Administrator PowerShell window, run `powershell -ExecutionPolicy Bypass -File .\install.ps1`.
-5. Check that the dashboard shows **key escrowed** for the laptop.
-6. With `dryRun: true`, run through the whole flow. Then set `dryRun: false` in `C:\Program Files\KillSwitch\config.json`, restart the `KillSwitchAgent` scheduled task, and test **Lock now**:
+5. Check that the dashboard shows **key escrowed ✓** for the laptop. `install.ps1` deletes the copied `config.json` afterwards, because it contains the enrollment token.
+6. With `dryRun: true`, run through the whole flow. Then set `dryRun: false` in `C:\Program Files\KillSwitch\config.json` and restart the `KillSwitchAgent` scheduled task. Within one check-in, the agent replaces the dry-run (fake) key with the laptop's real recovery key. Wait until the dashboard shows **key escrowed ✓** (not **⚠ key out of sync**), then test **Lock now**:
    - The laptop reboots to the BitLocker recovery screen.
    - Unlock it with **Recovery key** from the dashboard and click **Mark returned**.
    - The agent restores the TPM key and rotates the recovery key.
 7. Test the wipe last, on a machine you can afford to lose.
 
 To remove the agent, run `uninstall.ps1` as Administrator.
+
+**Re-installing an already enrolled laptop** (for example after a Windows reinstall): click **Allow re-enroll** on that laptop in the dashboard first. Re-enrollment stays open for 24 hours. Without it, the server refuses the enrollment and logs `ALERT_REENROLL_BLOCKED`, so nobody can take over another laptop's record with an enrollment token.
+
+**Employee is staying after all:** on the **Employees** tab, click **Cancel exit** (or send the HR webhook event `employee.exit_cancelled`). Their laptops go back to normal. A laptop that was already locked is restored automatically once IT enters its recovery key.
 
 ## 3. Production settings
 
@@ -87,6 +91,9 @@ Copy `server/.env.example` to `server/.env`, edit it, and run `node --env-file=.
 | `REQUIRED_WIPE_APPROVALS` | 2 | Number of different admins needed to approve a wipe |
 | `WIPE_MAX_PER_HOUR` | 3 | Mass-wipe protection; extra wipes are held and raise an alert |
 | `LOCK_MESSAGE` | … | Text shown on the BitLocker recovery screen |
+| `TZ_OFFSET` | +05:30 | Timezone of "last working day" dates (the day ends at 23:59:59 in this offset) |
+
+Run the tests with `npm test` (server) and `go test ./...` (agent).
 
 ## Security design
 

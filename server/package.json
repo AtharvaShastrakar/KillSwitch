@@ -1,13 +1,16 @@
 {
   "name": "killswitch-server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "KillSwitch - offboarding auto-lock & remote wipe server (prototype)",
   "type": "module",
   "main": "src/index.js",
-  "engines": { "node": ">=22.13" },
+  "engines": {
+    "node": ">=22.13"
+  },
   "scripts": {
     "start": "node src/index.js",
-    "demo": "node --env-file=demo.env src/index.js"
+    "demo": "node --env-file=demo.env src/index.js",
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "express": "^4.21.2"

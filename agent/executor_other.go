@@ -52,7 +52,8 @@ func (o *otherExecutor) Encryption() string {
 	return "unknown"
 }
 
-func (o *otherExecutor) RecoveryKey() (string, error) { return "", errUnsupported }
-func (o *otherExecutor) Lock(string) error            { return errUnsupported }
-func (o *otherExecutor) Unlock() (string, error)      { return "", errUnsupported }
-func (o *otherExecutor) Wipe() error                  { return errUnsupported }
+func (o *otherExecutor) RecoveryKey() (string, string, error) { return "", "", errUnsupported }
+func (o *otherExecutor) Lock(string) error                    { return errUnsupported }
+func (o *otherExecutor) Reboot() error                        { return errUnsupported }
+func (o *otherExecutor) Unlock() error                        { return errUnsupported }
+func (o *otherExecutor) Wipe() error                          { return errUnsupported }

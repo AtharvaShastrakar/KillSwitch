@@ -32,5 +32,8 @@ $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGo
 Register-ScheduledTask -TaskName $task -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 Start-ScheduledTask -TaskName $task
 
+# 4. The source config.json contains the enrollment token: delete it so nobody can reuse it.
+Remove-Item (Join-Path $src 'config.json') -Force -ErrorAction SilentlyContinue
+
 Write-Host "KillSwitch agent installed in $dest and started." -ForegroundColor Green
 Write-Host "Check the dashboard: the laptop should appear under Devices within a minute."

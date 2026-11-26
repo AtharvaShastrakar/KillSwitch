@@ -7,6 +7,7 @@ import { HttpError } from '../services.js';
 // Events:
 //   { "event": "employee.created", "empCode": "E101", "name": "Asha", "email": "asha@co.com" }
 //   { "event": "employee.exit", "empCode": "E101", "lastWorkingDay": "2026-12-15" }
+//   { "event": "employee.exit_cancelled", "empCode": "E101" }
 export function hrRouter(svc, secret, config) {
   const r = Router();
   r.post('/webhook', (req, res) => {
@@ -23,12 +24,17 @@ export function hrRouter(svc, secret, config) {
       if (!emp) throw new HttpError(404, 'unknown employee code');
       let lastDay;
       if (evt.lastWorkingDay) {
-        // End of the last working day (23:59:59 local server time).
-        lastDay = new Date(`${evt.lastWorkingDay}T23:59:59`).getTime();
+        // End of the last working day (23:59:59 in the company timezone, TZ_OFFSET).
+        lastDay = svc.parseLastDay(String(evt.lastWorkingDay));
       } else if (evt.lastDayInDays != null) {
         lastDay = Date.now() + Number(evt.lastDayInDays) * config.dayMs;
       }
       return res.json(svc.offboardEmployee(emp.id, lastDay, 'hr-webhook'));
+    }
+    if (evt.event === 'employee.exit_cancelled') {
+      const emp = svc.q('SELECT * FROM employees WHERE emp_code = ?').get(String(evt.empCode || ''));
+      if (!emp) throw new HttpError(404, 'unknown employee code');
+      return res.json(svc.cancelOffboarding(emp.id, 'hr-webhook'));
     }
     throw new HttpError(400, 'unsupported event');
   });

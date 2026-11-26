@@ -9,11 +9,15 @@ const num = (name, def) => {
 export function loadConfig() {
   const dayMs = num('DAY_MS', 86_400_000);
   const port = num('PORT', 8080);
+  // Timezone used to interpret "last working day" dates (end of day 23:59:59 in this offset).
+  const tzOffset = process.env.TZ_OFFSET || '+05:30';
+  if (!/^[+-]\d{2}:\d{2}$/.test(tzOffset)) throw new Error(`Invalid TZ_OFFSET: ${tzOffset} (use e.g. +05:30)`);
   return {
     port,
     dataDir: process.env.DATA_DIR || './data',
     publicUrl: process.env.PUBLIC_URL || `http://localhost:${port}`,
     dayMs,
+    tzOffset,
     graceDays: num('GRACE_DAYS', 10),
     wipeAfterLockDays: num('WIPE_AFTER_LOCK_DAYS', 20),
     leaseDays: num('LEASE_DAYS', 7),

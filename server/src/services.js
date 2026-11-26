@@ -12,6 +12,11 @@ export const S = {
   RETURNED: 'RETURNED',           // physically back with IT
 };
 
+// A BitLocker recovery password: 8 groups of 6 digits.
+const RECOVERY_KEY_RE = /^\d{6}(-\d{6}){7}$/;
+// A key protector ID as reported by the agent, e.g. {29FFE490-5071-4C60-BE5A-99811F2C64D5}.
+const KEY_ID_RE = /^[A-Za-z0-9{}-]{1,80}$/;
+
 // States in which a laptop keeps receiving a fresh offline lease.
 const LEASE_STATES = new Set([S.ACTIVE, S.OFFBOARDING, S.GRACE, S.RETURNED]);
 
@@ -77,6 +82,12 @@ export function createServices({ db, secrets, config }) {
 
   // ---------- Employees / HR ----------
 
+  // "YYYY-MM-DD" -> end of that day (23:59:59) in the company's timezone (config.tzOffset).
+  function parseLastDay(dateStr) {
+    if (typeof dateStr !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return NaN;
+    return new Date(`${dateStr}T23:59:59${config.tzOffset}`).getTime();
+  }
+
   function createEmployee({ empCode, name, email }, actor) {
     if (!empCode || !name) throw new HttpError(400, 'empCode and name are required');
     try {
@@ -107,7 +118,38 @@ export function createServices({ db, secrets, config }) {
     });
   }
 
+  // Exit cancelled (employee is staying): employee back to ACTIVE, laptops back to normal.
+  function cancelOffboarding(employeeId, actor) {
+    return tx(() => {
+      const emp = getEmployee(employeeId);
+      if (!['OFFBOARDING', 'LEFT'].includes(emp.status)) throw new HttpError(409, 'employee is not being offboarded');
+      q("UPDATE employees SET status = 'ACTIVE', last_day = NULL WHERE id = ?").run(employeeId);
+      const changed = [];
+      for (const d of q('SELECT * FROM devices WHERE employee_id = ?').all(employeeId)) {
+        if (d.state === S.WIPED || d.state === S.ACTIVE) continue;
+        q('DELETE FROM wipe_approvals WHERE device_id = ?').run(d.id);
+        // If a lock already ran on the laptop, the agent must restore its TPM protector.
+        if (d.lock_confirmed_at) queueCommand(d.id, 'unlock');
+        else cancelPending(d.id);
+        setState(d.id, S.ACTIVE, { grace_ends_at: null, wipe_due_at: null, lock_confirmed_at: null });
+        changed.push({ serial: d.serial, from: d.state, unlockQueued: !!d.lock_confirmed_at });
+      }
+      audit(actor, 'OFFBOARDING_CANCELLED', { employeeId, details: { previousStatus: emp.status, devices: changed } });
+      return getEmployee(employeeId);
+    });
+  }
+
   // ---------- Device actions ----------
+
+  // A laptop that is already enrolled can only be enrolled again after an admin allows it
+  // (e.g. Windows was reinstalled). This stops anyone with an enrollment token from taking over
+  // another laptop's record or overwriting its escrowed recovery key.
+  function allowReenroll(deviceId, actor) {
+    const d = getDevice(deviceId);
+    q('UPDATE devices SET reenroll_until = ? WHERE id = ?').run(now() + 24 * 3600_000, deviceId);
+    audit(actor, 'REENROLL_ALLOWED', { deviceId, employeeId: d.employee_id, details: { serial: d.serial, validHours: 24 } });
+    return getDevice(deviceId);
+  }
 
   function assignDevice(deviceId, employeeId, actor) {
     return tx(() => {
@@ -191,10 +233,13 @@ export function createServices({ db, secrets, config }) {
     const hourAgo = now() - 60 * 60 * 1000;
     const recent = q("SELECT COUNT(*) AS n FROM audit WHERE action = 'WIPE_EXECUTED' AND ts > ?").get(hourAgo).n;
     if (recent >= config.wipeMaxPerHour) {
-      // Mass-wipe protection: leave it pending and raise an alert instead.
-      audit('system', 'ALERT_WIPE_RATE_LIMIT', {
-        deviceId, details: `More than ${config.wipeMaxPerHour} wipes in one hour; wipe held for review`,
-      });
+      // Mass-wipe protection: leave it pending (tick() retries it later) and raise an alert once.
+      const alerted = q("SELECT 1 FROM audit WHERE action = 'ALERT_WIPE_RATE_LIMIT' AND device_id = ? AND ts > ?").get(deviceId, hourAgo);
+      if (!alerted) {
+        audit('system', 'ALERT_WIPE_RATE_LIMIT', {
+          deviceId, details: `More than ${config.wipeMaxPerHour} wipes in one hour; wipe held and retried automatically`,
+        });
+      }
       return;
     }
     // Crypto-shred: destroying the escrowed recovery key makes a TPM-less (locked) disk unrecoverable,
@@ -244,19 +289,23 @@ export function createServices({ db, secrets, config }) {
 
   function enroll({ enrollmentToken, serial, hostname, os, agentVersion }) {
     if (!enrollmentToken || !serial) throw new HttpError(400, 'enrollmentToken and serial are required');
-    return tx(() => {
+    const result = tx(() => {
       const t = q('SELECT * FROM enroll_tokens WHERE token_hash = ?').get(sha256(String(enrollmentToken)));
       if (!t || t.expires_at < now() || t.uses_left <= 0) throw new HttpError(401, 'invalid or expired enrollment token');
+
+      const existing = q('SELECT * FROM devices WHERE serial = ?').get(String(serial));
+      if (existing && existing.token_hash && !(existing.reenroll_until > now())) {
+        return { blocked: existing };
+      }
       q('UPDATE enroll_tokens SET uses_left = uses_left - 1 WHERE token_hash = ?').run(t.token_hash);
 
       const deviceToken = randomToken(32);
-      const existing = q('SELECT * FROM devices WHERE serial = ?').get(String(serial));
       let deviceId;
       if (existing) {
         // Re-enrollment (e.g. OS reinstalled). The device KEEPS its state, so a missing laptop
         // that gets reinstalled is locked again as soon as the agent comes back.
         deviceId = existing.id;
-        q('UPDATE devices SET token_hash = ?, hostname = ?, os = ?, agent_version = ?, last_seen = ? WHERE id = ?').run(
+        q('UPDATE devices SET token_hash = ?, hostname = ?, os = ?, agent_version = ?, last_seen = ?, reenroll_until = NULL WHERE id = ?').run(
           sha256(deviceToken), hostname || null, os || null, agentVersion || null, now(), deviceId,
         );
         if ([S.LOCKED, S.WIPE_PENDING, S.WIPED].includes(existing.state)) {
@@ -273,6 +322,14 @@ export function createServices({ db, secrets, config }) {
       }
       return { deviceId, deviceToken, serverTime: now() };
     });
+    if (result.blocked) {
+      audit('agent', 'ALERT_REENROLL_BLOCKED', {
+        deviceId: result.blocked.id, employeeId: result.blocked.employee_id,
+        details: { serial: String(serial), hostname: hostname || null, note: 'laptop already enrolled; an admin must click "Allow re-enroll" first' },
+      });
+      throw new HttpError(409, 'this laptop is already enrolled; an admin must allow re-enrollment on the dashboard first');
+    }
+    return result;
   }
 
   function deviceFromToken(token) {
@@ -283,22 +340,35 @@ export function createServices({ db, secrets, config }) {
   function heartbeat(device, body = {}) {
     return tx(() => {
       const t = now();
-      q('UPDATE devices SET last_seen = ?, hostname = COALESCE(?, hostname), agent_version = COALESCE(?, agent_version), last_report = ? WHERE id = ?').run(
+      // ID of the recovery password currently on the laptop (agents >= 0.2.0 send it every time).
+      const reportedId = typeof body.recoveryKeyId === 'string' && KEY_ID_RE.test(body.recoveryKeyId) ? body.recoveryKeyId : null;
+      q('UPDATE devices SET last_seen = ?, hostname = COALESCE(?, hostname), agent_version = COALESCE(?, agent_version), last_report = ?, reported_key_id = ? WHERE id = ?').run(
         t, body.hostname || null, body.agentVersion || null,
-        JSON.stringify({ lockState: body.lockState, encryption: body.encryption, dryRun: body.dryRun }), device.id,
+        JSON.stringify({ lockState: body.lockState, encryption: body.encryption, dryRun: body.dryRun }), reportedId, device.id,
       );
-      if (typeof body.recoveryKey === 'string' && body.recoveryKey.length >= 8 && body.recoveryKey.length <= 200) {
+      let keyRejected = false;
+      if (body.recoveryKey !== undefined && body.recoveryKey !== null) {
         const fresh = getDevice(device.id);
-        if (fresh.state !== S.WIPED) {
-          q('UPDATE devices SET recovery_key_enc = ? WHERE id = ?').run(encrypt(secrets.masterKey, body.recoveryKey), device.id);
-          audit('agent', 'RECOVERY_KEY_ESCROWED', { deviceId: device.id });
+        const key = typeof body.recoveryKey === 'string' ? body.recoveryKey.trim() : '';
+        if (fresh.state === S.WIPED) {
+          // keys of wiped laptops stay destroyed
+        } else if (!RECOVERY_KEY_RE.test(key)) {
+          // Never store garbage, and never tell the agent it was stored (see escrowConfirmed below).
+          keyRejected = true;
+          audit('agent', 'ALERT_RECOVERY_KEY_REJECTED', { deviceId: device.id, details: { reason: 'not a 48-digit recovery password', length: key.length } });
+        } else {
+          q('UPDATE devices SET recovery_key_enc = ?, recovery_key_id = ? WHERE id = ?').run(encrypt(secrets.masterKey, key), reportedId, device.id);
+          audit('agent', 'RECOVERY_KEY_ESCROWED', { deviceId: device.id, details: { keyId: reportedId, dryRun: !!body.dryRun } });
         }
       }
       const d = getDevice(device.id);
+      // Confirmed only if the server holds the key that is CURRENTLY on the laptop. If the IDs differ
+      // (dry-run fake key, key rotated, BitLocker re-enabled...) the agent re-sends the real key.
+      const escrowConfirmed = !keyRejected && !!d.recovery_key_enc && (reportedId === null || d.recovery_key_id === reportedId);
       const res = {
         serverTime: t,
         state: d.state,
-        escrowConfirmed: !!d.recovery_key_enc,
+        escrowConfirmed,
         lockMessage: config.lockMessage,
         lease: null,
         commands: [],
@@ -333,6 +403,11 @@ export function createServices({ db, secrets, config }) {
         ok ? 'done' : 'failed', now(), String(result ?? '').slice(0, 2000), c.id,
       );
       if (ok && c.action === 'lock') q('UPDATE devices SET lock_confirmed_at = ? WHERE id = ?').run(now(), device.id);
+      if (!ok && c.action === 'lock') {
+        // The laptop is NOT locked: never leave "Lock confirmed" on the dashboard.
+        q('UPDATE devices SET lock_confirmed_at = NULL WHERE id = ?').run(device.id);
+        audit('system', 'ALERT_LOCK_FAILED', { deviceId: device.id, details: { commandId: c.id, result: String(result ?? '').slice(0, 500) } });
+      }
       if (ok && c.action === 'unlock') q('UPDATE devices SET lock_confirmed_at = NULL WHERE id = ?').run(device.id);
       audit('agent', ok ? `COMMAND_${c.action.toUpperCase()}_DONE` : `COMMAND_${c.action.toUpperCase()}_FAILED`, {
         deviceId: device.id, details: { commandId: c.id, result: String(result ?? '').slice(0, 500) },
@@ -374,10 +449,15 @@ export function createServices({ db, secrets, config }) {
         });
       });
     }
+    // 4) Wipes that are fully approved but were held by the mass-wipe limit: retry them.
+    for (const d of q(`SELECT d.id FROM devices d WHERE d.state = ?
+                       AND (SELECT COUNT(*) FROM wipe_approvals w WHERE w.device_id = d.id) >= ?`).all(S.WIPE_PENDING, config.requiredWipeApprovals)) {
+      tx(() => executeWipe(d.id));
+    }
   }
 
   return {
-    S, audit, tick, getDevice, getEmployee,
+    S, audit, tick, parseLastDay, cancelOffboarding, allowReenroll, getDevice, getEmployee,
     createEmployee, offboardEmployee, assignDevice, lockDevice, cancelLock,
     requestWipe, approveWipe, markReturned, revealRecoveryKey,
     createEnrollToken, enroll, deviceFromToken, heartbeat, ack, tx, q,

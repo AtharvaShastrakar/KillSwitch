@@ -85,6 +85,8 @@ export function adminRouter(svc, { config, secrets }) {
       SELECT d.id, d.serial, d.hostname, d.os, d.state, d.employee_id, e.name AS employee_name, e.emp_code,
              d.last_seen, d.lease_expires, d.grace_ends_at, d.wipe_due_at, d.lock_confirmed_at, d.state_changed_at,
              d.agent_version, d.last_report, (d.recovery_key_enc IS NOT NULL) AS key_escrowed,
+             (d.recovery_key_enc IS NOT NULL AND (d.reported_key_id IS NULL OR d.reported_key_id = d.recovery_key_id)) AS key_in_sync,
+             d.reenroll_until,
              (SELECT COUNT(*) FROM wipe_approvals w WHERE w.device_id = d.id) AS wipe_approvals,
              (SELECT GROUP_CONCAT(a.username) FROM wipe_approvals w JOIN admins a ON a.id = w.admin_id WHERE w.device_id = d.id) AS approved_by,
              (SELECT c.action || ':' || c.status FROM commands c WHERE c.device_id = d.id ORDER BY c.created_at DESC LIMIT 1) AS last_command
@@ -103,9 +105,10 @@ export function adminRouter(svc, { config, secrets }) {
     const { lastWorkingDay, lastDayInDays } = req.body || {};
     let lastDay;
     if (lastDayInDays != null && lastDayInDays !== '') lastDay = Date.now() + Number(lastDayInDays) * config.dayMs;
-    else if (lastWorkingDay) lastDay = new Date(`${lastWorkingDay}T23:59:59`).getTime();
+    else if (lastWorkingDay) lastDay = svc.parseLastDay(String(lastWorkingDay));
     res.json(svc.offboardEmployee(Number(req.params.id), lastDay, req.actor));
   });
+  r.post('/employees/:id/cancel-offboarding', (req, res) => res.json(svc.cancelOffboarding(Number(req.params.id), req.actor)));
 
   const id = (req) => Number(req.params.id);
   r.post('/devices/:id/assign', (req, res) => {
@@ -117,6 +120,7 @@ export function adminRouter(svc, { config, secrets }) {
   r.post('/devices/:id/request-wipe', (req, res) => res.json(clean(svc.tx(() => svc.requestWipe(id(req), req.actor)))));
   r.post('/devices/:id/approve-wipe', (req, res) => res.json(clean(svc.approveWipe(id(req), req.admin))));
   r.post('/devices/:id/returned', (req, res) => res.json(clean(svc.markReturned(id(req), req.actor))));
+  r.post('/devices/:id/allow-reenroll', (req, res) => res.json(clean(svc.allowReenroll(id(req), req.actor))));
   r.post('/devices/:id/recovery-key', (req, res) => res.json({ recoveryKey: svc.revealRecoveryKey(id(req), req.actor) }));
 
   r.get('/audit', (req, res) => {

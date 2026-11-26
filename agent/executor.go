@@ -13,9 +13,14 @@ import (
 type Executor interface {
 	Serial() (string, error)
 	Encryption() string
-	RecoveryKey() (string, error) // ensure a recovery key exists and return it
-	Lock(message string) error    // reversible: boot requires the recovery key
-	Unlock() (newKey string, err error)
+	// RecoveryKey ensures a recovery password exists and returns its protector ID and the password.
+	RecoveryKey() (id, key string, err error)
+	// Lock removes the TPM protector so the next boot requires the recovery key, and verifies it.
+	// It does NOT reboot; call Reboot afterwards.
+	Lock(message string) error
+	Reboot() error
+	// Unlock restores the TPM protector and rotates the recovery password (read it with RecoveryKey).
+	Unlock() error
 	Wipe() error // irreversible factory reset
 }
 
@@ -35,6 +40,7 @@ func NewExecutor(dryRun bool, serialOverride string) Executor {
 type dryRunExecutor struct {
 	real           Executor
 	serialOverride string
+	fakeID         string
 	fakeKey        string
 }
 
@@ -51,27 +57,39 @@ func (d *dryRunExecutor) Serial() (string, error) {
 
 func (d *dryRunExecutor) Encryption() string { return "dry-run: " + d.real.Encryption() }
 
-func (d *dryRunExecutor) RecoveryKey() (string, error) {
+// In dry run the server gets a FAKE key with a "dry-run-..." ID. Because the ID can never match a real
+// BitLocker protector ID, the real key is escrowed automatically as soon as dryRun is switched off.
+func (d *dryRunExecutor) RecoveryKey() (string, string, error) {
 	if d.fakeKey == "" {
-		d.fakeKey = fakeRecoveryKey()
+		d.fakeID, d.fakeKey = fakeKeyID(), fakeRecoveryKey()
 	}
-	return d.fakeKey, nil
+	return d.fakeID, d.fakeKey, nil
 }
 
 func (d *dryRunExecutor) Lock(msg string) error {
-	log.Printf("[DRY RUN] would set pre-boot message %q, remove TPM protector and reboot to the BitLocker recovery screen", msg)
+	log.Printf("[DRY RUN] would set pre-boot message %q and remove the TPM protector", msg)
 	return nil
 }
 
-func (d *dryRunExecutor) Unlock() (string, error) {
+func (d *dryRunExecutor) Reboot() error {
+	log.Printf("[DRY RUN] would reboot to the BitLocker recovery screen")
+	return nil
+}
+
+func (d *dryRunExecutor) Unlock() error {
 	log.Printf("[DRY RUN] would re-add TPM protector and rotate the recovery password")
-	d.fakeKey = fakeRecoveryKey()
-	return d.fakeKey, nil
+	d.fakeID, d.fakeKey = fakeKeyID(), fakeRecoveryKey()
+	return nil
 }
 
 func (d *dryRunExecutor) Wipe() error {
 	log.Printf("[DRY RUN] would trigger a protected factory reset (MDM_RemoteWipe doWipeProtected)")
 	return nil
+}
+
+func fakeKeyID() string {
+	n, _ := rand.Int(rand.Reader, big.NewInt(1<<62))
+	return fmt.Sprintf("dry-run-%x", n.Int64())
 }
 
 // 48-digit BitLocker-style recovery password (8 groups of 6 digits) for demos.

@@ -21,7 +21,7 @@ import (
 	"time"
 )
 
-const agentVersion = "0.1.0"
+const agentVersion = "0.2.0"
 
 type Config struct {
 	ServerURL        string `json:"serverUrl"`
@@ -39,8 +39,8 @@ type State struct {
 	Serial          string           `json:"serial"`
 	LeaseExpires    int64            `json:"leaseExpires"`
 	EscrowConfirmed bool             `json:"escrowConfirmed"`
-	PendingKey      string           `json:"pendingKey,omitempty"` // rotated key not yet escrowed
-	SelfLocked      bool             `json:"selfLocked"`           // laptop is in locked mode (by command or offline lease)
+	EscrowedKeyID   string           `json:"escrowedKeyId,omitempty"` // ID of the recovery password the server confirmed
+	SelfLocked      bool             `json:"selfLocked"`              // laptop is in locked mode (by command or offline lease)
 	LockMessage     string           `json:"lockMessage"`
 	MaxSeenTime     int64            `json:"maxSeenTime"`
 	SeenCommands    map[string]int64 `json:"seenCommands"`
@@ -204,18 +204,16 @@ func (a *Agent) heartbeat() error {
 		"hostname": host, "agentVersion": agentVersion, "dryRun": a.dryRun,
 		"encryption": a.exec.Encryption(), "lockState": map[bool]string{true: "self-locked", false: "normal"}[a.st.SelfLocked],
 	}
-	sentKey := ""
-	if a.st.PendingKey != "" {
-		sentKey = a.st.PendingKey
-	} else if !a.st.EscrowConfirmed {
-		if k, err := a.exec.RecoveryKey(); err == nil {
-			sentKey = k
-		} else {
-			log.Printf("cannot read recovery key: %v", err)
+	// Report the ID of the recovery password that is on the laptop RIGHT NOW, every time.
+	// The server only confirms escrow if it holds that exact key; otherwise we send it.
+	keyID, key, keyErr := a.exec.RecoveryKey()
+	if keyErr != nil {
+		log.Printf("cannot read recovery key: %v", keyErr)
+	} else {
+		body["recoveryKeyId"] = keyID
+		if !a.st.EscrowConfirmed || keyID != a.st.EscrowedKeyID {
+			body["recoveryKey"] = key
 		}
-	}
-	if sentKey != "" {
-		body["recoveryKey"] = sentKey
 	}
 
 	var res heartbeatResp
@@ -227,9 +225,12 @@ func (a *Agent) heartbeat() error {
 		}
 		return err
 	}
-	a.st.EscrowConfirmed = res.EscrowConfirmed
-	if res.EscrowConfirmed && sentKey != "" && sentKey == a.st.PendingKey {
-		a.st.PendingKey = ""
+	// Only trust the confirmation if we told the server which key we have.
+	a.st.EscrowConfirmed = keyErr == nil && res.EscrowConfirmed
+	if a.st.EscrowConfirmed {
+		a.st.EscrowedKeyID = keyID
+	} else {
+		a.st.EscrowedKeyID = ""
 	}
 	if res.LockMessage != "" {
 		a.st.LockMessage = res.LockMessage
@@ -296,19 +297,20 @@ func (a *Agent) handleCommand(env Envelope) {
 	switch c.Action {
 	case "lock":
 		if !a.st.EscrowConfirmed && !a.dryRun {
-			err = errors.New("refusing to lock: recovery key not escrowed yet")
+			err = errors.New("refusing to lock: the server does not hold this laptop's current recovery key")
 			break
 		}
-		// Acknowledge first: the laptop reboots shortly after.
-		a.ack(c.ID, true, "lock started; rebooting to recovery screen")
-		a.st.SelfLocked = true // laptop is now in locked mode; don't self-lock again
-		a.saveState()
-		if err = a.exec.Lock(a.lockMessage()); err == nil {
-			return
+		// 1) Remove the TPM protector and verify the disk now needs the recovery key.
+		if err = a.exec.Lock(a.lockMessage()); err != nil {
+			break // acked as FAILED below; the dashboard shows the failure
 		}
-		a.st.SelfLocked = false
-		result = err.Error()
-		a.ack(c.ID, false, result)
+		// 2) Only now report success, then reboot to the recovery screen.
+		a.st.SelfLocked = true
+		a.saveState()
+		a.ack(c.ID, true, "locked: TPM protector removed; rebooting to recovery screen")
+		if rerr := a.exec.Reboot(); rerr != nil {
+			log.Printf("reboot failed (the laptop asks for the key at its next restart): %v", rerr)
+		}
 		return
 	case "unlock":
 		if !a.st.SelfLocked {
@@ -332,16 +334,15 @@ func (a *Agent) handleCommand(env Envelope) {
 }
 
 func (a *Agent) restore() (string, error) {
-	newKey, err := a.exec.Unlock()
-	if err != nil {
+	if err := a.exec.Unlock(); err != nil {
 		log.Printf("restore failed: %v", err)
 		return "", err
 	}
 	a.st.SelfLocked = false
-	if newKey != "" {
-		a.st.PendingKey = newKey // escrow the rotated key on the next heartbeat
-		a.st.EscrowConfirmed = false
-	}
+	// The recovery key was rotated: force the next heartbeat to escrow the new one.
+	a.st.EscrowConfirmed = false
+	a.st.EscrowedKeyID = ""
+	a.saveState()
 	return "TPM protector restored; recovery key rotated", nil
 }
 
@@ -359,6 +360,11 @@ func (a *Agent) selfLock(reason string) {
 	if err := a.exec.Lock(a.lockMessage()); err != nil {
 		log.Printf("self-lock failed: %v", err)
 		a.st.SelfLocked = false
+		a.saveState()
+		return
+	}
+	if err := a.exec.Reboot(); err != nil {
+		log.Printf("reboot failed (the laptop asks for the key at its next restart): %v", err)
 	}
 }
 

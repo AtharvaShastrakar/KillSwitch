@@ -38,3 +38,4 @@ dialog{border:0;border-radius:14px;padding:0;width:min(460px,92vw);box-shadow:0 
 .mono{font-family:ui-monospace,Menlo,Consolas,monospace}.big-key{font-size:16px;background:#f1f5f9;padding:12px;border-radius:8px;word-break:break-all}
 .details{max-width:360px;font-size:12px;color:var(--muted);word-break:break-word}
 @media(max-width:900px){.stats{grid-template-columns:repeat(3,1fr)}}
+.warn{color:#b42318}

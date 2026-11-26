@@ -86,5 +86,10 @@ export function openDb(dataDir) {
     CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit
       BEGIN SELECT RAISE(ABORT, 'audit log is append-only'); END;
   `);
+  // Migrations for databases created by older versions.
+  const cols = db.prepare('PRAGMA table_info(devices)').all().map((c) => c.name);
+  for (const [col, type] of [['recovery_key_id', 'TEXT'], ['reported_key_id', 'TEXT'], ['reenroll_until', 'INTEGER']]) {
+    if (!cols.includes(col)) db.exec(`ALTER TABLE devices ADD COLUMN ${col} ${type}`);
+  }
   return db;
 }

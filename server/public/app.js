@@ -87,7 +87,12 @@
   function timerFor(d) {
     switch (d.state) {
       case 'GRACE': return `Locks in <b>${fmtLeft(d.grace_ends_at)}</b>`;
-      case 'LOCKED': return `${d.lock_confirmed_at ? 'Lock confirmed' : 'Lock sent, waiting for laptop'}<div class="sub">Wipe approval in ${fmtLeft(d.wipe_due_at)}</div>`;
+      case 'LOCKED': {
+        const status = d.lock_confirmed_at ? 'Lock confirmed'
+          : d.last_command === 'lock:failed' ? '<b class="warn">⚠ Lock FAILED on laptop — see Audit log</b>'
+          : 'Lock sent, waiting for laptop';
+        return `${status}<div class="sub">Wipe approval in ${fmtLeft(d.wipe_due_at)}</div>`;
+      }
       case 'WIPE_PENDING': return `Approvals <b>${d.wipe_approvals}/${me.settings.requiredWipeApprovals}</b><div class="sub">${esc(d.approved_by || 'none yet')}</div>`;
       case 'OFFBOARDING': return 'Employee serving notice';
       default: return '<span class="muted">—</span>';
@@ -104,10 +109,13 @@
     if (d.state === 'WIPE_PENDING') out.push(b('approve-wipe', 'Approve wipe', 'danger'));
     if (!['ACTIVE', 'RETURNED'].includes(d.state)) out.push(b('returned', 'Mark returned'));
     if (d.key_escrowed) out.push(b('recovery-key', 'Recovery key'));
+    if (d.state !== 'WIPED') out.push(b('allow-reenroll', 'Allow re-enroll', 'ghost'));
     return `<div class="actions">${out.join('')}</div>`;
   }
 
+  let lastDevices = [];
   function renderDevices(devices) {
+    lastDevices = devices;
     const count = (s) => devices.filter((d) => d.state === s).length;
     $('#stats').innerHTML = ['ACTIVE', 'OFFBOARDING', 'GRACE', 'LOCKED', 'WIPE_PENDING', 'WIPED', 'RETURNED']
       .map((s) => `<div class="stat"><b>${count(s)}</b><span class="state st-${s}">${s.replace('_', ' ')}</span></div>`).join('');
@@ -119,7 +127,8 @@
         <td><b class="mono">${esc(d.serial)}</b><div class="sub">${esc(d.hostname)} · ${esc(d.os)}</div></td>
         <td>${d.employee_name ? `${esc(d.employee_name)}<div class="sub">${esc(d.emp_code)}</div>` : '<span class="muted">Unassigned</span>'}</td>
         <td><span class="state st-${esc(d.state)}">${esc(d.state.replace('_', ' '))}</span>
-            <div class="sub">${d.key_escrowed ? 'key escrowed' : 'no key escrowed'}</div></td>
+            <div class="sub">${!d.key_escrowed ? '<b class="warn">⚠ no key escrowed</b>'
+              : d.key_in_sync ? 'key escrowed ✓' : '<b class="warn">⚠ key out of sync</b>'}</div></td>
         <td>${timerFor(d)}</td>
         <td>${online ? '🟢' : '⚪'} ${ago(d.last_seen)}
             <div class="sub">${report.dryRun ? 'dry-run · ' : ''}${esc(d.last_command || '')}</div></td>
@@ -132,7 +141,8 @@
       <td class="mono">${esc(e.emp_code)}</td><td>${esc(e.name)}<div class="sub">${esc(e.email)}</div></td>
       <td><span class="state st-${e.status === 'ACTIVE' ? 'ACTIVE' : e.status === 'LEFT' ? 'LEFT' : 'OFFBOARDING'}">${esc(e.status)}</span></td>
       <td>${fmtTime(e.last_day)}</td><td>${e.device_count}</td>
-      <td>${e.status === 'ACTIVE' ? `<button class="btn sm danger" data-act="offboard" data-emp="${e.id}">Start offboarding</button>` : ''}</td>
+      <td>${e.status === 'ACTIVE' ? `<button class="btn sm danger" data-act="offboard" data-emp="${e.id}">Start offboarding</button>`
+        : `<button class="btn sm" data-act="cancel-offboard" data-emp="${e.id}">Cancel exit</button>`}</td>
     </tr>`).join('') : '<tr><td colspan="6" class="muted">No employees yet.</td></tr>';
   }
 
@@ -213,6 +223,14 @@
         if (!fd) return;
         await api(`/employees/${btn.dataset.emp}/offboard`, { body: Object.fromEntries(fd) });
         flash(`Offboarding started. Laptops lock ${me.settings.graceDays} days after the last working day unless returned.`);
+      } else if (act === 'cancel-offboard') {
+        if (!await dialog('Cancel this exit?', '<p>Use this when the employee is staying. Their laptops go back to normal. If a laptop was already locked, enter its recovery key at the BitLocker screen; the agent then restores it automatically.</p>', 'Cancel exit')) return;
+        await api(`/employees/${btn.dataset.emp}/cancel-offboarding`, { body: {} });
+        flash('Exit cancelled — laptops back to normal');
+      } else if (act === 'allow-reenroll') {
+        if (!await dialog('Allow re-enrollment?', '<p>Only do this if this laptop was reinstalled or its agent was set up again. For the next 24 hours, the laptop can register again with an enrollment token. A missing laptop that re-enrolls keeps its state and is locked again.</p>', 'Allow for 24 h', true)) return;
+        await api(`/devices/${id}/allow-reenroll`, { body: {} });
+        flash('Re-enrollment allowed for 24 hours');
       } else if (act === 'assign') {
         const opts = employees.filter((e) => e.status === 'ACTIVE').map((e) => `<option value="${e.id}">${esc(e.name)} (${esc(e.emp_code)})</option>`).join('');
         const fd = await dialog('Assign laptop', `<label>Employee<select name="employeeId"><option value="">— Unassigned —</option>${opts}</select></label>`, 'Assign');
@@ -220,7 +238,10 @@
         await api(`/devices/${id}/assign`, { body: { employeeId: fd.get('employeeId') } });
         flash('Laptop assigned');
       } else if (act === 'lock') {
-        if (!await dialog('Lock this laptop now?', '<p>The laptop will reboot to the BitLocker recovery screen the next time it checks in. This can be undone with the recovery key.</p>', 'Lock now', true)) return;
+        const dev = lastDevices.find((x) => String(x.id) === String(id));
+        const warn = dev && !dev.key_in_sync
+          ? '<p class="warn"><b>⚠ Warning:</b> the recovery key on the server does not match the laptop (yet). The agent will refuse to lock until the key is synced. Wait for the next check-in first.</p>' : '';
+        if (!await dialog('Lock this laptop now?', `<p>The laptop will reboot to the BitLocker recovery screen the next time it checks in. This can be undone with the recovery key.</p>${warn}`, 'Lock now', true)) return;
         await api(`/devices/${id}/lock`, { body: { reason: 'manual lock from dashboard' } });
         flash('Lock ordered');
       } else if (act === 'cancel-lock') {
