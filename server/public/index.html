@@ -17,7 +17,6 @@
     </div>
     <div class="login-panel">
       <form id="login-form" class="login-card">
-        <img class="login-logo" src="logo.png" alt="Adithya Power: Refractories &amp; Insulation">
         <h2>Sign in</h2>
         <p class="muted">Admin access only.</p>
         <label>Username <input name="username" autocomplete="username" required></label>
@@ -32,8 +31,7 @@
   <div id="app-view" class="shell hidden">
     <aside id="sidebar" class="sidebar">
       <div class="side-brand">
-        <div class="side-logo"><img src="logo.png" alt="Adithya Power"></div>
-        <div class="side-app"><div class="logo-mark sm">KS</div><b>KillSwitch</b></div>
+        <div class="side-app"><div class="logo-mark">KS</div><div><b>KillSwitch</b><span>Adithya Power</span></div></div>
       </div>
       <nav id="tabs" class="side-nav" aria-label="Main">
         <button data-tab="overview" class="nav-item active">
@@ -79,22 +77,6 @@
               <div class="card-head"><h2>Needs attention</h2><span class="muted small" id="attn-count"></span></div>
               <ul id="attention" class="attn-list"></ul>
             </div>
-          </div>
-          <div class="grid-2 wide-left">
-            <div class="card">
-              <div class="card-head"><h2>Coming up</h2><span class="muted small">Next 30 days</span></div>
-              <ul id="upcoming" class="timeline"></ul>
-            </div>
-            <div class="card">
-              <div class="card-head"><h2>Agent health</h2><span class="muted small" id="agent-ver"></span></div>
-              <div id="health" class="health"></div>
-            </div>
-          </div>
-          <div class="quick">
-            <button class="qa" data-goto="employees"><span class="qa-i">+</span><span><b>Add employee</b><small>Register a new joiner</small></span></button>
-            <button class="qa" data-goto="employees"><span class="qa-i">→</span><span><b>Start offboarding</b><small>Employee is leaving</small></span></button>
-            <button class="qa" data-goto="enroll"><span class="qa-i">⤓</span><span><b>Enroll a laptop</b><small>Create an install token</small></span></button>
-            <button class="qa" data-goto="devices" data-filter="LOCKED"><span class="qa-i">🔒</span><span><b>Locked laptops</b><small>Unlock or approve wipe</small></span></button>
           </div>
         </section>
 
