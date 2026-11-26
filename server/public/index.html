@@ -8,99 +8,163 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <!-- ===== Login ===== -->
   <section id="login-view" class="login hidden">
-    <form id="login-form" class="card login-card">
+    <div class="login-brand">
+      <div class="logo-mark big">KS</div>
       <h1>KillSwitch</h1>
-      <p class="muted">Offboarding auto-lock &amp; remote wipe</p>
-      <label>Username <input name="username" autocomplete="username" required></label>
-      <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
-      <button class="btn primary" type="submit">Sign in</button>
-      <p id="login-error" class="error"></p>
-    </form>
+      <p>Laptop offboarding: auto-lock &amp; remote wipe</p>
+      <p class="login-co">Adithya Power · IT Department</p>
+    </div>
+    <div class="login-panel">
+      <form id="login-form" class="login-card">
+        <h2>Sign in</h2>
+        <p class="muted">Admin access only. Every sign-in is recorded in the audit log.</p>
+        <label>Username <input name="username" autocomplete="username" required></label>
+        <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+        <button class="btn primary block" type="submit">Sign in</button>
+        <p id="login-error" class="error" role="alert"></p>
+      </form>
+    </div>
   </section>
 
-  <div id="app-view" class="hidden">
-    <header class="topbar">
-      <div class="brand">KillSwitch <span id="mode-badge" class="badge"></span></div>
-      <nav id="tabs">
-        <button data-tab="devices" class="tab active">Devices</button>
-        <button data-tab="employees" class="tab">Employees</button>
-        <button data-tab="audit" class="tab">Audit log</button>
-        <button data-tab="enroll" class="tab">Enroll laptops</button>
+  <!-- ===== App ===== -->
+  <div id="app-view" class="shell hidden">
+    <aside id="sidebar" class="sidebar">
+      <div class="side-brand">
+        <div class="logo-mark">KS</div>
+        <div><b>KillSwitch</b><span>Adithya Power</span></div>
+      </div>
+      <nav id="tabs" class="side-nav" aria-label="Main">
+        <button data-tab="overview" class="nav-item active">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path class="f" d="M4 13h6V4H4zm0 7h6v-5H4zm10 0h6v-9h-6zm0-16v5h6V4z"/></svg>Overview</button>
+        <button data-tab="devices" class="nav-item">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path class="f" d="M4 5h16v10H4zm-2 12h20v2H2z"/></svg>Laptops</button>
+        <button data-tab="employees" class="nav-item">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path class="f" d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm0 2c-4 0-8 2-8 5v1h16v-1c0-3-4-5-8-5z"/></svg>Employees</button>
+        <button data-tab="audit" class="nav-item">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path class="s" d="M6 2.5h8.5L19 7v14.5H6zM14 3v5h5M9 12h7M9 16h7"/></svg>Audit log</button>
+        <button data-tab="enroll" class="nav-item">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path class="f" d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></svg>Enroll laptops</button>
       </nav>
-      <div class="who"><span id="who"></span> <button id="logout" class="btn ghost">Sign out</button></div>
-    </header>
+      <div class="side-foot">
+        <span id="mode-badge" class="badge hidden"></span>
+        <div class="who"><span class="avatar" id="who-initial"></span><span id="who"></span></div>
+        <button id="logout" class="btn ghost-light block">Sign out</button>
+      </div>
+    </aside>
+    <div id="scrim" class="scrim hidden"></div>
 
-    <main>
-      <div id="flash" class="flash hidden"></div>
+    <div class="content">
+      <header class="topbar">
+        <button id="menu-btn" class="icon-btn" aria-label="Open menu">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+        </button>
+        <h1 id="page-title">Overview</h1>
+        <span id="live" class="live" title="Auto-refreshes every few seconds">● Live</span>
+      </header>
 
-      <section data-panel="devices">
-        <div class="stats" id="stats"></div>
-        <div class="card">
-          <h2>Devices</h2>
-          <table>
-            <thead><tr><th>Serial / host</th><th>Assigned to</th><th>State</th><th>Timer</th><th>Agent</th><th>Actions</th></tr></thead>
-            <tbody id="devices-body"></tbody>
-          </table>
-        </div>
-      </section>
+      <main>
+        <div id="flash" class="flash hidden" role="status"></div>
 
-      <section data-panel="employees" class="hidden">
-        <div class="card">
-          <h2>Add employee</h2>
-          <form id="emp-form" class="row">
-            <input name="empCode" placeholder="Employee code (e.g. E101)" required>
-            <input name="name" placeholder="Full name" required>
-            <input name="email" type="email" placeholder="Email">
-            <button class="btn primary">Add</button>
-          </form>
-        </div>
-        <div class="card">
-          <h2>Employees</h2>
-          <table>
-            <thead><tr><th>Code</th><th>Name</th><th>Status</th><th>Last working day</th><th>Laptops</th><th>Offboard</th></tr></thead>
-            <tbody id="employees-body"></tbody>
-          </table>
-        </div>
-      </section>
+        <!-- Overview -->
+        <section data-panel="overview">
+          <div class="kpis" id="kpis"></div>
+          <div class="grid-2">
+            <div class="card">
+              <div class="card-head"><h2>Laptops by state</h2><span class="muted small" id="state-total"></span></div>
+              <div id="state-chart" class="state-chart"></div>
+            </div>
+            <div class="card">
+              <div class="card-head"><h2>Needs attention</h2><span class="muted small" id="attn-count"></span></div>
+              <ul id="attention" class="attn-list"></ul>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h2>Recent activity</h2><button class="btn sm" data-goto="audit">View audit log</button></div>
+            <ul id="recent" class="activity"></ul>
+          </div>
+        </section>
 
-      <section data-panel="audit" class="hidden">
-        <div class="card">
-          <h2>Audit log <span class="muted small">(append-only)</span></h2>
-          <table>
-            <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Device</th><th>Employee</th><th>Details</th></tr></thead>
-            <tbody id="audit-body"></tbody>
-          </table>
-        </div>
-      </section>
+        <!-- Devices -->
+        <section data-panel="devices" class="hidden">
+          <div class="toolbar">
+            <input id="dev-search" type="search" placeholder="Search serial, hostname or employee…" aria-label="Search laptops">
+            <div id="dev-filters" class="chips" role="group" aria-label="Filter by state"></div>
+          </div>
+          <div class="card flush">
+            <table class="rtable">
+              <thead><tr><th>Laptop</th><th>Assigned to</th><th>State</th><th>Timer</th><th>Agent</th><th>Actions</th></tr></thead>
+              <tbody id="devices-body"></tbody>
+            </table>
+          </div>
+        </section>
 
-      <section data-panel="enroll" class="hidden">
-        <div class="card">
-          <h2>Enroll laptops</h2>
-          <p>Create an enrollment token, then put the generated <code>config.json</code> next to the agent and run the installer on each laptop.</p>
-          <form id="token-form" class="row">
-            <label>Uses <input name="uses" type="number" value="10" min="1" max="500"></label>
-            <label>Valid for (hours) <input name="hours" type="number" value="24" min="1" max="720"></label>
-            <button class="btn primary">Create token</button>
-          </form>
-          <pre id="token-out" class="code hidden"></pre>
-        </div>
-        <div class="card">
-          <h2>HR system webhook</h2>
-          <p>Point your HR system's "employee exit" webhook here. Requests must carry an <code>X-Signature</code> header (HMAC-SHA256 of the body).</p>
-          <button id="hr-info" class="btn">Show webhook URL &amp; secret</button>
-          <pre id="hr-out" class="code hidden"></pre>
-        </div>
-      </section>
-    </main>
+        <!-- Employees -->
+        <section data-panel="employees" class="hidden">
+          <div class="card">
+            <h2>Add employee</h2>
+            <form id="emp-form" class="form-row">
+              <label>Employee code<input name="empCode" placeholder="Same as Keka, e.g. E101" required></label>
+              <label>Full name<input name="name" placeholder="Full name" required></label>
+              <label>Email<input name="email" type="email" placeholder="name@adithyapower.com"></label>
+              <button class="btn primary">Add employee</button>
+            </form>
+          </div>
+          <div class="toolbar">
+            <input id="emp-search" type="search" placeholder="Search name, code or email…" aria-label="Search employees">
+          </div>
+          <div class="card flush">
+            <table class="rtable">
+              <thead><tr><th>Code</th><th>Name</th><th>Status</th><th>Last working day</th><th>Laptops</th><th>Action</th></tr></thead>
+              <tbody id="employees-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Audit -->
+        <section data-panel="audit" class="hidden">
+          <div class="toolbar">
+            <input id="audit-search" type="search" placeholder="Search action, actor, laptop or details…" aria-label="Search audit log">
+            <span class="muted small">Append-only: entries cannot be edited or deleted.</span>
+          </div>
+          <div class="card flush">
+            <table class="rtable">
+              <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Laptop</th><th>Employee</th><th>Details</th></tr></thead>
+              <tbody id="audit-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Enroll -->
+        <section data-panel="enroll" class="hidden">
+          <div class="card">
+            <h2>Enroll laptops</h2>
+            <p class="muted">Create an enrollment token, save the generated <code>config.json</code> next to the agent, and run <code>install.ps1</code> as Administrator on each laptop.</p>
+            <form id="token-form" class="form-row">
+              <label>Number of laptops<input name="uses" type="number" value="1" min="1" max="500"></label>
+              <label>Valid for (hours)<input name="hours" type="number" value="24" min="1" max="720"></label>
+              <button class="btn primary">Create token</button>
+            </form>
+            <pre id="token-out" class="code hidden"></pre>
+          </div>
+          <div class="card">
+            <h2>HR system webhook</h2>
+            <p class="muted">For HR software with webhooks. Requests must carry an <code>X-Signature</code> header (HMAC-SHA256 of the body).</p>
+            <button id="hr-info" class="btn">Show webhook URL &amp; secret</button>
+            <pre id="hr-out" class="code hidden"></pre>
+          </div>
+        </section>
+      </main>
+    </div>
   </div>
 
   <dialog id="dialog">
     <form method="dialog" class="dialog-body">
       <h3 id="dialog-title"></h3>
       <div id="dialog-content"></div>
-      <div class="row end">
-        <button value="cancel" class="btn ghost">Cancel</button>
+      <div class="dialog-actions">
+        <button value="cancel" class="btn">Cancel</button>
         <button value="ok" id="dialog-ok" class="btn primary">OK</button>
       </div>
     </form>
