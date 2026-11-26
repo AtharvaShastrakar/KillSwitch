@@ -120,9 +120,8 @@
     if (!me) return;
     try {
       if (currentTab === 'overview') {
-        const [devices, audit] = await Promise.all([api('/devices'), api('/audit?limit=8')]);
-        lastDevices = devices;
-        renderOverview(devices, audit);
+        [lastDevices, employees] = await Promise.all([api('/devices'), api('/employees')]);
+        renderOverview(lastDevices);
       }
       if (currentTab === 'devices') { employees = await api('/employees'); renderDevices(lastDevices = await api('/devices')); }
       if (currentTab === 'employees') { employees = await api('/employees'); renderEmployees(); }
@@ -149,7 +148,7 @@
     return items.sort((a, b) => order[a.sev] - order[b.sev]);
   }
 
-  function renderOverview(devices, audit) {
+  function renderOverview(devices) {
     const count = (s) => devices.filter((d) => d.state === s).length;
     const online = devices.filter(isOnline).length;
     const items = attentionItems(devices);
@@ -193,13 +192,56 @@
       ? items.slice(0, 8).map((i) => `<li><span class="attn-icon ${i.sev}">${i.sev === 'info' ? 'i' : '!'}</span>
           <div><div class="t">${esc(i.t)}</div><div class="d">${esc(i.d)}</div></div></li>`).join('')
       : '<li class="attn-ok">✓ Nothing needs attention right now.</li>';
-
-    $('#recent').innerHTML = audit.length
-      ? audit.map((a) => `<li><span class="a-time">${fmtTime(a.ts)}</span>
-          <span><span class="a-act">${esc(actionLabel(a.action))}</span>${a.serial ? ` <span class="muted">· ${esc(a.serial)}</span>` : ''}${a.employee_name ? ` <span class="muted">· ${esc(a.employee_name)}</span>` : ''}</span>
-          <span class="a-who">${esc(a.actor)}</span></li>`).join('')
-      : '<li class="empty">No activity yet.</li>';
+    renderUpcoming(devices);
+    renderHealth(devices);
   }
+
+  function renderUpcoming(devices) {
+    const now = Date.now();
+    const horizon = now + 30 * 86_400_000;
+    const ev = [];
+    for (const e of employees) {
+      if (e.status === 'OFFBOARDING' && e.last_day) ev.push({ at: e.last_day, t: `${e.name}: last working day`, d: `${e.device_count} laptop${e.device_count === 1 ? '' : 's'} to collect` });
+    }
+    for (const d of devices) {
+      const who = d.employee_name ? ` · ${d.employee_name}` : '';
+      if (d.state === 'GRACE' && d.grace_ends_at) ev.push({ at: d.grace_ends_at, t: `Laptop ${d.serial} locks`, d: `Unless returned before this${who}` });
+      if (d.state === 'LOCKED' && d.wipe_due_at) ev.push({ at: d.wipe_due_at, t: `Wipe request for ${d.serial}`, d: `Needs ${me.settings.requiredWipeApprovals} admin approvals${who}` });
+    }
+    const list = ev.filter((x) => x.at <= horizon).sort((a, b) => a.at - b.at).slice(0, 6);
+    const inText = (ms) => {
+      const days = Math.round((ms - now) / 86_400_000);
+      return ms <= now ? 'due now' : days === 0 ? 'today' : days === 1 ? 'tomorrow' : `in ${days} days`;
+    };
+    $('#upcoming').innerHTML = list.length ? list.map((x) => {
+      const dt = new Date(x.at);
+      return `<li><div class="tl-date"><b>${dt.getDate()}</b><span>${dt.toLocaleString('en', { month: 'short' })}</span></div>
+        <div class="tl-what"><b>${esc(x.t)}</b><span>${esc(x.d)}</span></div><span class="tl-in">${inText(x.at)}</span></li>`;
+    }).join('') : '<li class="empty">Nothing scheduled. No one is leaving in the next 30 days.</li>';
+  }
+
+  function renderHealth(devices) {
+    const live = devices.filter((d) => d.state !== 'WIPED');
+    const n = live.length;
+    const bar = (v, cls = '') => `<svg viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true"><rect class="trk" x="0" y="0" width="100" height="8" rx="4"/>${v > 0 ? `<rect class="fil ${cls}" x="0" y="0" width="${Math.max(2, v * 100).toFixed(1)}" height="8" rx="4"/>` : ''}</svg>`;
+    const online = live.filter(isOnline).length;
+    const synced = live.filter((d) => d.key_escrowed && d.key_in_sync).length;
+    const offline3 = live.filter((d) => d.last_seen && now() - d.last_seen > 3 * 86_400_000).length;
+    const dry = live.filter((d) => { try { return JSON.parse(d.last_report || '{}').dryRun; } catch { return false; } }).length;
+    const versions = [...new Set(live.map((d) => d.agent_version).filter(Boolean))].sort();
+    const latest = versions[versions.length - 1];
+    const outdated = live.filter((d) => d.agent_version && d.agent_version !== latest).length;
+    $('#agent-ver').textContent = latest ? `latest agent v${latest}` : '';
+    if (!n) { $('#health').innerHTML = '<div class="empty">No laptops enrolled yet.</div>'; return; }
+    const row = (label, val, sub, frac, cls) => `<div class="h-row"><span class="h-label">${label}</span><span class="h-val">${val}</span>${bar(frac, cls)}<span class="h-sub">${sub}</span></div>`;
+    $('#health').innerHTML = [
+      row('Online now', `${online}/${n}`, 'Checked in within the last 20 minutes', online / n, 'ok'),
+      row('Recovery keys saved', `${synced}/${n}`, synced === n ? 'Every laptop can be unlocked from the dashboard' : `${n - synced} laptop(s) cannot be locked yet`, synced / n, synced === n ? 'ok' : 'bad'),
+      row('Offline 3+ days', `${offline3}`, `They lock themselves after ${me.settings.leaseDays} days offline`, offline3 / n, offline3 ? 'bad' : ''),
+      row('Dry-run / outdated agents', `${dry} / ${outdated}`, dry || outdated ? 'Switch dry-run off and update old agents before rollout' : 'All agents live and up to date', (dry + outdated) / n, dry || outdated ? 'bad' : 'ok'),
+    ].join('');
+  }
+  const now = () => Date.now();
 
   // ----- devices -----
   function timerFor(d) {
